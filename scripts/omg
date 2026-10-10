@@ -85,11 +85,21 @@ EOF
 	fi
 	export XDG_SESSION_TYPE=x11
 	export XDG_CURRENT_DESKTOP=i3
-	printf '==> T1600 Quadro 600 session (Xorg nvidia-390 + i3). Hyprland cannot run.\n'
-	if [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && command -v dbus-run-session >/dev/null 2>&1; then
-		exec dbus-run-session startx
+	printf '==> T1600 Quadro 600: Xorg + i3 (nvidia-driver-390).\n' >&2
+	printf '    Hyprland will not start: this GPU has no DRM (/dev/dri).\n' >&2
+	run_startx() {
+		if [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && command -v dbus-run-session >/dev/null 2>&1; then
+			dbus-run-session startx
+		else
+			startx
+		fi
+	}
+	if run_startx; then
+		exit 0
 	fi
-	exec startx
+	printf '\nstartx failed. Xorg log tail:\n' >&2
+	tail -n 80 /var/log/Xorg.0.log 2>/dev/null || tail -n 80 "$HOME/.local/share/xorg/Xorg.0.log" 2>/dev/null || true
+	exit 1
 fi
 
 # Qt / QuickShell (the Omarchy top bar) on Wayland.
