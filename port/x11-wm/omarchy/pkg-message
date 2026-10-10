@@ -9,8 +9,8 @@ Omarchy for FreeBSD is installed. To finish setting up your desktop:
        service seatd start
        service dbus start
 
-     This fork uses Xorg scfb on the T1600 (no i915kms). Hyprland cannot
-     run without DRM; omg starts Xorg + i3. Confirm kld_list has no *kms.
+     T1600 Quadro 600 (GF108): nvidia-driver-390 + nvidia-modeset.
+     Hyprland cannot run; omg starts Xorg + i3. Reboot after install.
 
   2. Add your user to the video group (seatd + GPU access, as root):
        pw groupmod video -m <youruser>

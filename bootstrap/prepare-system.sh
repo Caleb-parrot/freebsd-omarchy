@@ -79,43 +79,60 @@ if [ -f /etc/pkg/FreeBSD.conf ] && grep -q 'quarterly' /etc/pkg/FreeBSD.conf; th
 	priv pkg update -f
 fi
 
-# 1. GPU. i915kms does not work on this Dell Precision T1600, so do not load
-# any DRM/KMS module (i915kms/amdgpu/radeonkms). Graphics is Xorg + scfb
-# (vt(4) framebuffer). Hyprland/Aquamarine needs /dev/dri and cannot run here.
-# xf86-video-vesa is installed too: T1600 is BIOS-era; if scfb gives a black
-# screen, change Driver to "vesa" in 10-scfb.conf.
-log "Installing Xorg scfb (no i915kms) for Dell Precision T1600"
-priv pkg install -y xorg-minimal xinit xf86-video-scfb xf86-video-vesa \
-	xf86-input-libinput i3 i3status xterm
-log "Removing KMS modules from kld_list (do not kldunload i915kms live — it freezes the TTY)"
+# 1. GPU. T1600 target is NVIDIA GF108GL Quadro 600 (Fermi). Last NVIDIA
+# branch that supports it is 390.xx — x11/nvidia-driver-390. Do not load
+# i915kms (broken here), amdgpu, or nvidia-drm (drm-kmod nvidia-drm does
+# not exist for 390). kld_list gets nvidia-modeset (pulls nvidia.ko).
+# Hyprland/Aquamarine still cannot run: 390 has no GBM/DRM. Session is
+# Xorg + nvidia + i3. Do not kldload nvidia-modeset during install (TTY).
+log "Installing NVIDIA 390 driver for Quadro 600 (GF108GL)"
+priv pkg install -y nvidia-driver-390 xorg-minimal xinit xf86-input-libinput \
+	i3 i3status xterm
+priv sysrc linux_enable=YES
+priv service linux start || true
+log "kld_list: nvidia-modeset only (strip i915kms/amdgpu/radeonkms/nvidia-drm)"
 priv sh -c 'sysrc kld_list-=i915kms >/dev/null 2>&1 || true
 sysrc kld_list-=amdgpu >/dev/null 2>&1 || true
-sysrc kld_list-=radeonkms >/dev/null 2>&1 || true'
+sysrc kld_list-=radeonkms >/dev/null 2>&1 || true
+sysrc kld_list-=nvidia-drm >/dev/null 2>&1 || true
+kld_list=$(sysrc -n kld_list 2>/dev/null || true)
+case " $kld_list " in
+*" nvidia-modeset "*) ;;
+*) sysrc kld_list+=nvidia-modeset ;;
+esac'
 XORG_DIR=/usr/local/etc/X11/xorg.conf.d
 priv mkdir -p "$XORG_DIR"
-SCFB_CONF="$XORG_DIR/10-scfb.conf"
-if [ ! -f "$SCFB_CONF" ]; then
-	log "Writing $SCFB_CONF"
-	printf '%s\n' \
-		'Section "Device"' \
-		'	Identifier "Card0"' \
-		'	Driver "scfb"' \
-		'EndSection' \
-		'' \
-		'Section "ServerFlags"' \
-		'	Option "AutoAddGPU" "false"' \
-		'EndSection' |
-		priv tee "$SCFB_CONF" >/dev/null
-fi
-# vt(4) is required for scfb; it is the FreeBSD default, pin it anyway.
+priv rm -f "$XORG_DIR/10-scfb.conf"
+NVIDIA_CONF="$XORG_DIR/10-nvidia.conf"
+log "Writing $NVIDIA_CONF"
+printf '%s\n' \
+	'Section "Device"' \
+	'	Identifier "Card0"' \
+	'	Driver "nvidia"' \
+	'	VendorName "NVIDIA Corporation"' \
+	'	BoardName "Quadro 600"' \
+	'EndSection' \
+	'' \
+	'Section "ServerFlags"' \
+	'	Option "AutoAddGPU" "false"' \
+	'EndSection' |
+	priv tee "$NVIDIA_CONF" >/dev/null
 if ! grep -q '^kern.vty=' /boot/loader.conf 2>/dev/null; then
 	log "Setting kern.vty=vt in /boot/loader.conf"
 	printf '\nkern.vty=vt\n' | priv tee -a /boot/loader.conf >/dev/null
 fi
+if ! grep -q '^hw.vga.textmode=' /boot/loader.conf 2>/dev/null; then
+	# Keeps vt usable after the 390 driver takes the display.
+	printf 'hw.vga.textmode=1\n' | priv tee -a /boot/loader.conf >/dev/null
+fi
 priv sysrc moused_enable=YES
 priv service moused start || true
 if kldstat -q -n i915kms 2>/dev/null; then
-	log "WARNING: i915kms is loaded now. Reboot so scfb can own the framebuffer (do not kldunload it)."
+	log "WARNING: i915kms is loaded now. Reboot so nvidia-modeset can attach (do not kldunload i915kms)."
+fi
+display="$(pciconf -lv 2>/dev/null | grep -iE -A5 'class=0x03(00|80)' || true)"
+if ! printf '%s' "$display" | grep -qiE 'nvidia|gf108'; then
+	log "WARNING: no NVIDIA GF108/Quadro in pciconf. Seat the Quadro 600 in the x16 slot; BIOS Video → Primary Video Auto uses the add-in card."
 fi
 
 # 2. Minimal services.

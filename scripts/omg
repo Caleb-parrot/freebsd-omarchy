@@ -2,9 +2,9 @@
 #
 # omg — launch the desktop from a FreeBSD TTY.
 #
-# Dell Precision T1600: i915kms does not work, so the default session is
-# Xorg + scfb + i3. Hyprland/Aquamarine needs DRM and cannot use scfb.
-# OMG_HYPRLAND=1 forces the Wayland path when /dev/dri exists.
+# Dell Precision T1600: NVIDIA Quadro 600 (GF108) with nvidia-driver-390.
+# Default session is Xorg + nvidia + i3. Hyprland cannot run (390 has no
+# nvidia-drm/GBM). OMG_HYPRLAND=1 forces Wayland if /dev/dri exists.
 #
 # Usage: log in on a virtual terminal and run `omg`.
 
@@ -60,13 +60,14 @@ if ! id -Gn | grep -qw video; then
 	exit 1
 fi
 
-# T1600: i915kms does not work. Hyprland/Aquamarine needs DRM (/dev/dri) and
-# cannot use scfb. Default session is Xorg + scfb + i3. Set OMG_HYPRLAND=1 to
-# force the Wayland path if a KMS device appears later.
+# T1600 Quadro 600: Xorg nvidia-driver-390 + i3. Hyprland needs DRM.
 if [ -z "$OMG_HYPRLAND" ]; then
 	if kldstat -q -n i915kms 2>/dev/null; then
-		printf 'warning: i915kms is still loaded; scfb needs the vt framebuffer.\n' >&2
-		printf '         reboot (do not kldunload i915kms — it freezes the TTY).\n' >&2
+		printf 'warning: i915kms is still loaded; reboot so nvidia-modeset can attach.\n' >&2
+		printf '         do not kldunload i915kms — it freezes the TTY.\n' >&2
+	fi
+	if ! kldstat -q -n nvidia-modeset 2>/dev/null && ! kldstat -q -n nvidia 2>/dev/null; then
+		printf 'warning: nvidia-modeset is not loaded. Reboot (kld_list has nvidia-modeset).\n' >&2
 	fi
 	if ! command -v startx >/dev/null 2>&1; then
 		printf 'error: startx not found. Re-run: sh bootstrap/prepare-system.sh\n' >&2
@@ -74,7 +75,7 @@ if [ -z "$OMG_HYPRLAND" ]; then
 	fi
 	XINITRC="$HOME/.xinitrc"
 	if [ ! -f "$XINITRC" ]; then
-		printf '==> writing %s (i3 on Xorg/scfb)\n' "$XINITRC"
+		printf '==> writing %s (i3 on Xorg/nvidia)\n' "$XINITRC"
 		cat > "$XINITRC" <<'EOF'
 #!/bin/sh
 export XDG_SESSION_TYPE=x11
@@ -84,7 +85,7 @@ EOF
 	fi
 	export XDG_SESSION_TYPE=x11
 	export XDG_CURRENT_DESKTOP=i3
-	printf '==> T1600 scfb session (Xorg + i3). Hyprland needs i915kms and cannot run.\n'
+	printf '==> T1600 Quadro 600 session (Xorg nvidia-390 + i3). Hyprland cannot run.\n'
 	if [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && command -v dbus-run-session >/dev/null 2>&1; then
 		exec dbus-run-session startx
 	fi

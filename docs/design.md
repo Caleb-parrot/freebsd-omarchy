@@ -322,7 +322,7 @@ Validated in a **FreeBSD 15.1-RELEASE arm64 QEMU/hvf VM** (tooling under `test/v
 **Not testable in a VM — needs real hardware:** the live graphical session.
 Hyprland's backend library **Aquamarine** takes its buffer allocator from **gbm/DRM**. FreeBSD has no virtio-gpu KMS driver (and no `vkms`-style virtual DRM), so no `/dev/dri` exists in any FreeBSD guest (arm64 or amd64, QEMU or bhyve). Aquamarine then aborts with `Cannot open backend: no allocator available` — even headless, and even though software EGL (`llvmpipe`, surfaceless) is present. A `wayvnc` path is therefore not viable for Hyprland.
 
-**Recommended real-hardware test:** Dell Precision T1600 with Xorg `scfb` (no `i915kms`; Hyprland/Aquamarine needs DRM and cannot run on this box), booting FreeBSD on a TTY, then `omg` (Xorg + i3). The VM remains the CI/build/config validator.
+**Recommended real-hardware test:** Dell Precision T1600 with NVIDIA Quadro 600 (GF108) using `nvidia-driver-390` + `nvidia-modeset` (no `i915kms`, no `nvidia-drm`), then `omg` (Xorg + i3). Hyprland cannot run on this GPU. The VM remains the CI/build/config validator.
 
 ---
 

@@ -37,23 +37,27 @@ Reboot, login as non-root, then:
 omg
 ```
 
-## Hardware: Dell Precision T1600
+## Hardware: Dell Precision T1600 + Quadro 600
 
-`i915kms` does **not** work on this box (live load freezes the TTY; Hyprland
-then dies in Aquamarine with no DRM). This fork uses **Xorg `scfb`** on the
-`vt(4)` framebuffer instead: no KMS modules on `kld_list`.
+Graphics is **NVIDIA GF108GL Quadro 600** with **`nvidia-driver-390`**
+(Fermi; current `nvidia-driver` and `nvidia-drm-kmod` do not support this
+chip). `i915kms` is not used.
 
-Hyprland cannot run on scfb (Aquamarine needs `/dev/dri`). `omg` starts
-**Xorg + i3**. If the screen stays black, the T1600 is BIOS-era — edit
-`/usr/local/etc/X11/xorg.conf.d/10-scfb.conf` and set `Driver "vesa"`.
+`bootstrap/prepare-system.sh` sets `kld_list+=nvidia-modeset`, `linux_enable`,
+and `/usr/local/etc/X11/xorg.conf.d/10-nvidia.conf` (`Driver "nvidia"`).
+Hyprland cannot run (390 has no nvidia-drm/GBM). `omg` starts **Xorg + i3**.
+
+BIOS **Video → Primary Video** should stay **Auto** so the PEG (Quadro)
+card is primary. Plug the monitor into the Quadro, not the motherboard.
 
 ```sh
-sysrc kld_list          # must NOT contain i915kms/amdgpu/radeonkms
-kldstat | grep kms      # empty after reboot
-grep Driver /usr/local/etc/X11/xorg.conf.d/10-scfb.conf
+sysrc kld_list                 # nvidia-modeset; no i915kms
+kldstat | grep nvidia
+grep Driver /usr/local/etc/X11/xorg.conf.d/10-nvidia.conf
+pciconf -lv | grep -A4 vgapci  # NVIDIA GF108GL
 ```
 
-If `i915kms` is still loaded, **reboot** (do not `kldunload` it). Then `omg`.
+Reboot after install so `nvidia-modeset` loads. Do not `kldunload i915kms`.
 
 ## Uninstall
 
