@@ -31,14 +31,26 @@ PATH="$OMARCHY_PATH/bin:$HOME/.local/bin:$PATH"
 export PATH
 
 # FreeBSD has no systemd-logind to create XDG_RUNTIME_DIR. Prefer an existing
-# one (e.g. from consolekit2 at /var/run/user/UID); otherwise fall back to /tmp.
+# one (pam_xdg uses /var/run/xdg/$USER; consolekit2 uses /var/run/user/UID).
+# Hyprland's constructor only treats /run/user as "standard", so the warning
+# on FreeBSD is expected. Fall back to /tmp if nothing exists yet.
 if [ -z "$XDG_RUNTIME_DIR" ]; then
-	XDG_RUNTIME_DIR="/var/run/user/$(id -u)"
-	[ -d "$XDG_RUNTIME_DIR" ] || XDG_RUNTIME_DIR="/tmp/runtime-$(id -u)"
+	if [ -d "/var/run/xdg/$(id -un)" ]; then
+		XDG_RUNTIME_DIR="/var/run/xdg/$(id -un)"
+	elif [ -d "/var/run/user/$(id -u)" ]; then
+		XDG_RUNTIME_DIR="/var/run/user/$(id -u)"
+	else
+		XDG_RUNTIME_DIR="/tmp/runtime-$(id -u)"
+	fi
 	export XDG_RUNTIME_DIR
 fi
 mkdir -p "$XDG_RUNTIME_DIR"
 chmod 0700 "$XDG_RUNTIME_DIR"
+
+# Crash reporter does mkdir() (not mkdir -p) of $HOME/.cache/hyprland; a
+# missing ~/.cache makes the real std::runtime_error message disappear.
+CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
+mkdir -p "$CACHE_HOME/hyprland"
 
 # Qt / QuickShell (the Omarchy top bar) on Wayland.
 export QT_QPA_PLATFORM=wayland
@@ -47,12 +59,51 @@ export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
 # Chromium / Electron on Wayland.
 export ELECTRON_OZONE_PLATFORM_HINT=wayland
 
-# dbus session (portals, notifications). Only wrap if not already inside one.
-# Exec Hyprland directly (not the port's start-hyprland wrapper): the wrapper
-# resets the environment, dropping the QT_QPA_PLATFORM/Wayland exports above
-# that QuickShell and other Qt clients need.
-if [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && command -v dbus-run-session >/dev/null 2>&1; then
-	exec dbus-run-session -- Hyprland
+# Preflight: Aquamarine throws std::runtime_error (and Omarchy silences stdout
+# logs) if DRM/seatd/video-group are missing. Fail here with a useful hint.
+if ! id -Gn | grep -qw video; then
+	printf 'error: %s is not in the video group in this session.\n' "$(id -un)" >&2
+	printf '       doas pw groupmod video -m %s\n' "$(id -un)" >&2
+	printf '       then log out and back in before running omg.\n' >&2
+	exit 1
+fi
+if ! kldstat -q -n i915kms 2>/dev/null; then
+	printf 'error: i915kms is not loaded (Dell Precision T1600 Intel HD Graphics).\n' >&2
+	printf '       sysrc kld_list  # should include i915kms\n' >&2
+	printf '       doas kldload i915kms  # or reboot so kld_list takes effect\n' >&2
+	exit 1
+fi
+if [ ! -e /dev/dri/card0 ]; then
+	printf 'error: no /dev/dri/card0 — i915kms did not attach a DRM device.\n' >&2
+	printf '       pciconf -lv | grep -A4 vgapci\n' >&2
+	exit 1
+fi
+if ! [ -r /dev/dri/card0 ]; then
+	printf 'error: cannot read /dev/dri/card0 (video group / permissions).\n' >&2
+	ls -l /dev/dri >&2 || true
+	exit 1
+fi
+if ! sockstat -l 2>/dev/null | grep -q seatd; then
+	if ! service seatd onestatus >/dev/null 2>&1; then
+		printf 'error: seatd is not running. doas service seatd start\n' >&2
+		exit 1
+	fi
 fi
 
-exec Hyprland
+dump_hypr_log() {
+	inst=$(ls -td "$XDG_RUNTIME_DIR"/hypr/* 2>/dev/null | head -1)
+	[ -n "$inst" ] && [ -f "$inst/hyprland.log" ] || return 0
+	cp "$inst/hyprland.log" "$CACHE_HOME/hyprland/last.log" 2>/dev/null || true
+	printf '\nHyprland failed. Last log (%s):\n' "$inst/hyprland.log" >&2
+	tail -n 80 "$inst/hyprland.log" >&2
+}
+
+# Do not exec: Omarchy disables stdout logs after AsyncResourceGatherer, so a
+# later Aquamarine DRM throw prints nothing on the TTY. Catch the exit and
+# dump hyprland.log. The port's start-hyprland wrapper is still avoided: it
+# resets the environment and drops the Qt/Wayland exports QuickShell needs.
+if [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && command -v dbus-run-session >/dev/null 2>&1; then
+	dbus-run-session -- Hyprland || { dump_hypr_log; exit 1; }
+	exit 0
+fi
+Hyprland || { dump_hypr_log; exit 1; }
