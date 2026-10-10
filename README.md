@@ -39,29 +39,21 @@ omg
 
 ## Hardware: Dell Precision T1600
 
-This fork is pinned to **Intel `i915kms`** for a **Dell Precision T1600**
-(Sandy Bridge, Intel HD Graphics 2000/3000 or Xeon HD Graphics P3000).
-`bootstrap/prepare-system.sh` puts `i915kms` on `kld_list` (and strips
-`amdgpu` / `radeonkms`) so the driver loads on reboot. It does not
-`kldload i915kms` during install — that freezes the install TTY.
+`i915kms` does **not** work on this box (live load freezes the TTY; Hyprland
+then dies in Aquamarine with no DRM). This fork uses **Xorg `scfb`** on the
+`vt(4)` framebuffer instead: no KMS modules on `kld_list`.
 
-The T1600 iGPU only enumerates when:
-
-- The CPU actually has HD Graphics (Xeon **E3-12x5** / Core i3/i5/i7; a
-  Xeon E3-12x0 without the trailing 5 has no iGPU).
-- No discrete GPU is in the PCIe x16 slot. BIOS **Video → Primary Video**
-  (`Auto` or `Onboard/PEG`) **disables onboard graphics** when a PEG card
-  is installed. Pull the AMD/NVIDIA card, plug the monitor into the
-  motherboard DisplayPort/DVI, then boot.
-
-Confirm after install:
+Hyprland cannot run on scfb (Aquamarine needs `/dev/dri`). `omg` starts
+**Xorg + i3**. If the screen stays black, the T1600 is BIOS-era — edit
+`/usr/local/etc/X11/xorg.conf.d/10-scfb.conf` and set `Driver "vesa"`.
 
 ```sh
-sysrc kld_list          # should include i915kms, not amdgpu
-kldstat | grep i915kms
-ls /dev/dri             # card0 + renderD128 once i915kms is attached
-pciconf -lv | grep -A4 vgapci
+sysrc kld_list          # must NOT contain i915kms/amdgpu/radeonkms
+kldstat | grep kms      # empty after reboot
+grep Driver /usr/local/etc/X11/xorg.conf.d/10-scfb.conf
 ```
+
+If `i915kms` is still loaded, **reboot** (do not `kldunload` it). Then `omg`.
 
 ## Uninstall
 

@@ -79,29 +79,43 @@ if [ -f /etc/pkg/FreeBSD.conf ] && grep -q 'quarterly' /etc/pkg/FreeBSD.conf; th
 	priv pkg update -f
 fi
 
-# 1. GPU/DRM kernel module. Wayland compositors (Hyprland/Aquamarine) need a
-# DRM render node (/dev/dri/*), which only exists once the KMS driver is
-# loaded. This fork targets a Dell Precision T1600 (Sandy Bridge Intel HD
-# Graphics 2000/3000 / Xeon HD P3000), so always load i915kms — never amdgpu.
-# A leftover FirePro in the x16 slot is too old for amdgpu anyway (radeonkms),
-# and T1600 BIOS Video → Primary Video disables the iGPU entirely when a PEG
-# card is installed.
-log "Installing DRM kernel module (drm-kmod)"
-priv pkg install -y drm-kmod
-KMS=i915kms
-# Do not kldload i915kms here: taking over vt(4) mid-install freezes the TTY
-# (looks like a hang after the doas prompts). Only write kld_list; reboot loads it.
-log "Enabling $KMS at boot (Dell Precision T1600 Intel HD Graphics); it loads on reboot"
-priv sh -c 'sysrc kld_list-=amdgpu >/dev/null 2>&1 || true
-sysrc kld_list-=radeonkms >/dev/null 2>&1 || true
-kld_list=$(sysrc -n kld_list 2>/dev/null || true)
-case " $kld_list " in
-*" '"$KMS"' "*) ;;
-*) sysrc kld_list+='"$KMS"' ;;
-esac'
-display="$(pciconf -lv 2>/dev/null | grep -iE -A5 'class=0x03(00|80)' || true)"
-if ! printf '%s' "$display" | grep -qi intel; then
-	log "WARNING: no Intel display device in pciconf. On a Precision T1600 a PCIe GPU disables the iGPU (BIOS: Video → Primary Video). Remove the discrete card, use a Xeon E3-12x5 / Core i5/i7 with HD Graphics, then reboot."
+# 1. GPU. i915kms does not work on this Dell Precision T1600, so do not load
+# any DRM/KMS module (i915kms/amdgpu/radeonkms). Graphics is Xorg + scfb
+# (vt(4) framebuffer). Hyprland/Aquamarine needs /dev/dri and cannot run here.
+# xf86-video-vesa is installed too: T1600 is BIOS-era; if scfb gives a black
+# screen, change Driver to "vesa" in 10-scfb.conf.
+log "Installing Xorg scfb (no i915kms) for Dell Precision T1600"
+priv pkg install -y xorg-minimal xinit xf86-video-scfb xf86-video-vesa \
+	xf86-input-libinput i3 i3status xterm
+log "Removing KMS modules from kld_list (do not kldunload i915kms live — it freezes the TTY)"
+priv sh -c 'sysrc kld_list-=i915kms >/dev/null 2>&1 || true
+sysrc kld_list-=amdgpu >/dev/null 2>&1 || true
+sysrc kld_list-=radeonkms >/dev/null 2>&1 || true'
+XORG_DIR=/usr/local/etc/X11/xorg.conf.d
+priv mkdir -p "$XORG_DIR"
+SCFB_CONF="$XORG_DIR/10-scfb.conf"
+if [ ! -f "$SCFB_CONF" ]; then
+	log "Writing $SCFB_CONF"
+	printf '%s\n' \
+		'Section "Device"' \
+		'	Identifier "Card0"' \
+		'	Driver "scfb"' \
+		'EndSection' \
+		'' \
+		'Section "ServerFlags"' \
+		'	Option "AutoAddGPU" "false"' \
+		'EndSection' |
+		priv tee "$SCFB_CONF" >/dev/null
+fi
+# vt(4) is required for scfb; it is the FreeBSD default, pin it anyway.
+if ! grep -q '^kern.vty=' /boot/loader.conf 2>/dev/null; then
+	log "Setting kern.vty=vt in /boot/loader.conf"
+	printf '\nkern.vty=vt\n' | priv tee -a /boot/loader.conf >/dev/null
+fi
+priv sysrc moused_enable=YES
+priv service moused start || true
+if kldstat -q -n i915kms 2>/dev/null; then
+	log "WARNING: i915kms is loaded now. Reboot so scfb can own the framebuffer (do not kldunload it)."
 fi
 
 # 2. Minimal services.

@@ -1,9 +1,10 @@
 #!/bin/sh
 #
-# omg — launch the Omarchy Hyprland desktop from a FreeBSD TTY.
+# omg — launch the desktop from a FreeBSD TTY.
 #
-# The x11-wm/hyprland port already ships its own `start-hyprland`; this wrapper
-# layers the Omarchy/FreeBSD-specific environment on top of it.
+# Dell Precision T1600: i915kms does not work, so the default session is
+# Xorg + scfb + i3. Hyprland/Aquamarine needs DRM and cannot use scfb.
+# OMG_HYPRLAND=1 forces the Wayland path when /dev/dri exists.
 #
 # Usage: log in on a virtual terminal and run `omg`.
 
@@ -52,35 +53,51 @@ chmod 0700 "$XDG_RUNTIME_DIR"
 CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
 mkdir -p "$CACHE_HOME/hyprland"
 
-# Qt / QuickShell (the Omarchy top bar) on Wayland.
-export QT_QPA_PLATFORM=wayland
-export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
-
-# Chromium / Electron on Wayland.
-export ELECTRON_OZONE_PLATFORM_HINT=wayland
-
-# Preflight: Aquamarine throws std::runtime_error (and Omarchy silences stdout
-# logs) if DRM/seatd/video-group are missing. Fail here with a useful hint.
 if ! id -Gn | grep -qw video; then
 	printf 'error: %s is not in the video group in this session.\n' "$(id -un)" >&2
 	printf '       doas pw groupmod video -m %s\n' "$(id -un)" >&2
 	printf '       then log out and back in before running omg.\n' >&2
 	exit 1
 fi
-if ! kldstat -q -n i915kms 2>/dev/null; then
-	printf 'error: i915kms is not loaded (Dell Precision T1600 Intel HD Graphics).\n' >&2
-	printf '       sysrc kld_list  # should include i915kms\n' >&2
-	printf '       doas kldload i915kms  # or reboot so kld_list takes effect\n' >&2
-	exit 1
+
+# T1600: i915kms does not work. Hyprland/Aquamarine needs DRM (/dev/dri) and
+# cannot use scfb. Default session is Xorg + scfb + i3. Set OMG_HYPRLAND=1 to
+# force the Wayland path if a KMS device appears later.
+if [ -z "$OMG_HYPRLAND" ]; then
+	if kldstat -q -n i915kms 2>/dev/null; then
+		printf 'warning: i915kms is still loaded; scfb needs the vt framebuffer.\n' >&2
+		printf '         reboot (do not kldunload i915kms — it freezes the TTY).\n' >&2
+	fi
+	if ! command -v startx >/dev/null 2>&1; then
+		printf 'error: startx not found. Re-run: sh bootstrap/prepare-system.sh\n' >&2
+		exit 1
+	fi
+	XINITRC="$HOME/.xinitrc"
+	if [ ! -f "$XINITRC" ]; then
+		printf '==> writing %s (i3 on Xorg/scfb)\n' "$XINITRC"
+		cat > "$XINITRC" <<'EOF'
+#!/bin/sh
+export XDG_SESSION_TYPE=x11
+export XDG_CURRENT_DESKTOP=i3
+exec i3
+EOF
+	fi
+	export XDG_SESSION_TYPE=x11
+	export XDG_CURRENT_DESKTOP=i3
+	printf '==> T1600 scfb session (Xorg + i3). Hyprland needs i915kms and cannot run.\n'
+	if [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && command -v dbus-run-session >/dev/null 2>&1; then
+		exec dbus-run-session startx
+	fi
+	exec startx
 fi
+
+# Qt / QuickShell (the Omarchy top bar) on Wayland.
+export QT_QPA_PLATFORM=wayland
+export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
+export ELECTRON_OZONE_PLATFORM_HINT=wayland
+
 if [ ! -e /dev/dri/card0 ]; then
-	printf 'error: no /dev/dri/card0 — i915kms did not attach a DRM device.\n' >&2
-	printf '       pciconf -lv | grep -A4 vgapci\n' >&2
-	exit 1
-fi
-if ! [ -r /dev/dri/card0 ]; then
-	printf 'error: cannot read /dev/dri/card0 (video group / permissions).\n' >&2
-	ls -l /dev/dri >&2 || true
+	printf 'error: OMG_HYPRLAND=1 but no /dev/dri/card0.\n' >&2
 	exit 1
 fi
 if ! sockstat -l 2>/dev/null | grep -q seatd; then
@@ -98,10 +115,6 @@ dump_hypr_log() {
 	tail -n 80 "$inst/hyprland.log" >&2
 }
 
-# Do not exec: Omarchy disables stdout logs after AsyncResourceGatherer, so a
-# later Aquamarine DRM throw prints nothing on the TTY. Catch the exit and
-# dump hyprland.log. The port's start-hyprland wrapper is still avoided: it
-# resets the environment and drops the Qt/Wayland exports QuickShell needs.
 if [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && command -v dbus-run-session >/dev/null 2>&1; then
 	dbus-run-session -- Hyprland || { dump_hypr_log; exit 1; }
 	exit 0
