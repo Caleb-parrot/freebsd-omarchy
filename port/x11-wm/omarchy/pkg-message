@@ -9,6 +9,9 @@ Omarchy for FreeBSD is installed. To finish setting up your desktop:
        service seatd start
        service dbus start
 
+     This fork loads Intel i915kms (Dell Precision T1600 HD Graphics), not
+     amdgpu. Confirm with: sysrc kld_list; kldstat | grep i915kms
+
   2. Add your user to the video group (seatd + GPU access, as root):
        pw groupmod video -m <youruser>
      Then log out and back in for the group change to take effect.

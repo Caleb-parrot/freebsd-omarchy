@@ -26,7 +26,7 @@ Start from a fresh, minimal FreeBSD install. Run as your **normal user** (not
 root — Hyprland refuses to run as root).
 
 ```sh
-git clone https://github.com/klimb/freebsd-omarchy
+git clone https://github.com/Caleb-parrot/freebsd-omarchy
 cd freebsd-omarchy
 sh bootstrap/install.sh
 ```
@@ -35,6 +35,31 @@ Reboot, login as non-root, then:
 
 ```sh
 omg
+```
+
+## Hardware: Dell Precision T1600
+
+This fork is pinned to **Intel `i915kms`** for a **Dell Precision T1600**
+(Sandy Bridge, Intel HD Graphics 2000/3000 or Xeon HD Graphics P3000).
+`bootstrap/prepare-system.sh` loads `i915kms` at boot and strips `amdgpu` /
+`radeonkms` from `kld_list`.
+
+The T1600 iGPU only enumerates when:
+
+- The CPU actually has HD Graphics (Xeon **E3-12x5** / Core i3/i5/i7; a
+  Xeon E3-12x0 without the trailing 5 has no iGPU).
+- No discrete GPU is in the PCIe x16 slot. BIOS **Video → Primary Video**
+  (`Auto` or `Onboard/PEG`) **disables onboard graphics** when a PEG card
+  is installed. Pull the AMD/NVIDIA card, plug the monitor into the
+  motherboard DisplayPort/DVI, then boot.
+
+Confirm after install:
+
+```sh
+sysrc kld_list          # should include i915kms, not amdgpu
+kldstat | grep i915kms
+ls /dev/dri             # card0 + renderD128 once i915kms is attached
+pciconf -lv | grep -A4 vgapci
 ```
 
 ## Uninstall
