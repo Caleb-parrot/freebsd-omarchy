@@ -41,8 +41,9 @@ omg
 
 This fork is pinned to **Intel `i915kms`** for a **Dell Precision T1600**
 (Sandy Bridge, Intel HD Graphics 2000/3000 or Xeon HD Graphics P3000).
-`bootstrap/prepare-system.sh` loads `i915kms` at boot and strips `amdgpu` /
-`radeonkms` from `kld_list`.
+`bootstrap/prepare-system.sh` puts `i915kms` on `kld_list` (and strips
+`amdgpu` / `radeonkms`) so the driver loads on reboot. It does not
+`kldload i915kms` during install — that freezes the install TTY.
 
 The T1600 iGPU only enumerates when:
 

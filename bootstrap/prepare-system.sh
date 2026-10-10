@@ -53,6 +53,19 @@ priv() {
 	else doas "$@"; fi
 }
 
+# Persist must exist before the GPU/pkg steps. Step 4 still adds the nopass
+# shutdown/acpiconf rules; without persist here every sysrc/kldload re-prompts.
+if [ "$(id -u)" -ne 0 ]; then
+	DOAS_CONF=/usr/local/etc/doas.conf
+	DOAS_RULE="permit persist $USER_NAME as root"
+	if ! { [ -f "$DOAS_CONF" ] && grep -qF "$DOAS_RULE" "$DOAS_CONF"; }; then
+		log "Granting doas persist for $USER_NAME"
+		printf '%s\n' "$DOAS_RULE" | priv tee -a "$DOAS_CONF" >/dev/null
+		priv chown root:wheel "$DOAS_CONF"
+		priv chmod 0644 "$DOAS_CONF"
+	fi
+fi
+
 log() { printf '==> %s\n' "$*"; }
 
 # 0. Switch the FreeBSD package repo from the default "quarterly" branch to
@@ -76,15 +89,16 @@ fi
 log "Installing DRM kernel module (drm-kmod)"
 priv pkg install -y drm-kmod
 KMS=i915kms
-log "Enabling $KMS at boot (Dell Precision T1600 Intel HD Graphics) and loading it now"
-priv sysrc 'kld_list-=amdgpu' >/dev/null 2>&1 || true
-priv sysrc 'kld_list-=radeonkms' >/dev/null 2>&1 || true
-if ! { sysrc -n kld_list 2>/dev/null || true; } | grep -qw "$KMS"; then
-	priv sysrc kld_list+="$KMS"
-fi
-priv kldunload amdgpu 2>/dev/null || true
-priv kldunload radeonkms 2>/dev/null || true
-priv kldload "$KMS" 2>/dev/null || true
+# Do not kldload i915kms here: taking over vt(4) mid-install freezes the TTY
+# (looks like a hang after the doas prompts). Only write kld_list; reboot loads it.
+log "Enabling $KMS at boot (Dell Precision T1600 Intel HD Graphics); it loads on reboot"
+priv sh -c 'sysrc kld_list-=amdgpu >/dev/null 2>&1 || true
+sysrc kld_list-=radeonkms >/dev/null 2>&1 || true
+kld_list=$(sysrc -n kld_list 2>/dev/null || true)
+case " $kld_list " in
+*" '"$KMS"' "*) ;;
+*) sysrc kld_list+='"$KMS"' ;;
+esac'
 display="$(pciconf -lv 2>/dev/null | grep -iE -A5 'class=0x03(00|80)' || true)"
 if ! printf '%s' "$display" | grep -qi intel; then
 	log "WARNING: no Intel display device in pciconf. On a Precision T1600 a PCIe GPU disables the iGPU (BIOS: Video → Primary Video). Remove the discrete card, use a Xeon E3-12x5 / Core i5/i7 with HD Graphics, then reboot."
